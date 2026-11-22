@@ -1,0 +1,25 @@
+server:
+  port: ${PORT:8080}
+  shutdown: graceful
+
+spring:
+  application:
+    name: catalog-api
+  lifecycle:
+    timeout-per-shutdown-phase: 20s
+
+catalog:
+  cache-seconds: ${CATALOG_CACHE_SECONDS:60}
+
+management:
+  endpoint:
+    health:
+      probes:
+        enabled: true
+  endpoints:
+    web:
+      exposure:
+        include: health,info,prometheus
+  metrics:
+    tags:
+      application: catalog-api

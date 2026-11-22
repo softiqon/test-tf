@@ -1,0 +1,50 @@
+# Network IaC pipeline: validate everything on PR, plan/apply each root on main.
+trigger:
+  branches:
+    include: [main]
+  paths:
+    include: [modules/*, patterns/*, live/*]
+
+pr:
+  paths:
+    include: [modules/*, patterns/*, live/*]
+
+variables:
+  TF_VERSION: "1.9.8"
+  TF_IN_AUTOMATION: "true"
+
+stages:
+  - stage: validate
+    jobs:
+      - job: static_checks
+        pool: { vmImage: ubuntu-latest }
+        steps:
+          - task: TerraformInstaller@1
+            inputs: { terraformVersion: $(TF_VERSION) }
+          - script: terraform fmt -recursive -check -diff
+            displayName: terraform fmt
+          - script: |
+              set -e
+              for root in live/*/*/; do
+                echo "== $root"; terraform -chdir="$root" init -backend=false -input=false >/dev/null
+                terraform -chdir="$root" validate
+              done
+            displayName: terraform validate (all roots)
+          - script: |
+              curl -s https://raw.githubusercontent.com/terraform-linters/tflint/master/install_linux.sh | bash
+              tflint --init && tflint --recursive --config "$(pwd)/.tflint.hcl"
+            displayName: tflint
+          - script: |
+              pip install -q checkov
+              checkov -d . --framework terraform --quiet --compact --soft-fail
+            displayName: checkov
+
+  # One plan/apply pair per root. Order matters: hub before vended spokes.
+  - template: templates/terraform-root.yml
+    parameters: { name: dev_app_network, root: live/dev/app-network, serviceConnection: sc-azure-dev, environment: network-dev }
+
+  - template: templates/terraform-root.yml
+    parameters: { name: prod_connectivity, root: live/prod/connectivity, serviceConnection: sc-azure-connectivity, environment: network-prod, dependsOn: [validate] }
+
+  - template: templates/terraform-root.yml
+    parameters: { name: prod_spoke_data, root: live/prod/spoke-data, serviceConnection: sc-azure-data, environment: network-prod, applyDependsOn: [apply_prod_connectivity] }
